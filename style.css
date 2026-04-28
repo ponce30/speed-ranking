@@ -244,11 +244,12 @@ th, td {
   color: var(--labelPrimary);
 }
 th {
-  background: rgba(10,10,15,0.85);
+  background: rgba(10,10,15,0.95);
   cursor: pointer;
   user-select: none;
   position: sticky;
   top: 0;
+  z-index: 2;
   font-family: var(--font-mono);
   font-weight: 700;
   font-size: var(--text-caption1);
@@ -274,11 +275,18 @@ td:nth-child(2), th:nth-child(2) {
   font-family: var(--font-system);
   font-weight: 500;
   color: var(--labelPrimary);
+  position: sticky;
+  left: 0;
 }
+td:nth-child(2) { background: #12121a; z-index: 1; }
+th:nth-child(2) { z-index: 3; }
 tbody tr { transition: background 0.1s; }
 tbody tr:hover td { background: rgba(198,12,48,0.05); }
 tbody tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 tbody tr:nth-child(even):hover td { background: rgba(198,12,48,0.05); }
+tbody tr:nth-child(even) td:nth-child(2) { background: #16161f; }
+tbody tr:hover td:nth-child(2),
+tbody tr:nth-child(even):hover td:nth-child(2) { background: #1c1018; }
 
 #emptyHint {
   text-align: center;
