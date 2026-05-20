@@ -76,56 +76,50 @@ function detectDelim(text) {
 
 // Tableauからのコピペで「Game」など複数行に渡るセル値が改行で分割された場合に再統合する。
 function joinMultilineCells(text) {
-  if (detectDelim(text) !== '\t') return text;
+  const delim = detectDelim(text);
   const lines = text.split(/\r?\n/);
   if (lines.length === 0) return text;
   const headerLine = lines[0];
-  const expectedCols = headerLine.split('\t').length;
+  const expectedCols = headerLine.split(delim).length;
   if (expectedCols < 2) return text;
 
   const recordTabThreshold = Math.max(1, Math.floor(expectedCols / 2));
+  const countDelim = (s) => (s.match(new RegExp(delim === '\t' ? '\\t' : ',', 'g')) || []).length;
 
   const out = [headerLine];
   let current = null;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
     if (!line.trim()) continue;
-    const tabCount = (line.match(/\t/g) || []).length;
-    // 先頭タブで始まる行は「前レコードの残りセル」を意味する続き行 (新レコードとは扱わない)
-    const startsWithTab = line.startsWith('\t');
-    if (!startsWithTab && tabCount >= recordTabThreshold) {
+    const delimCount = countDelim(line);
+    const startsWithDelim = line.startsWith(delim);
+    if (!startsWithDelim && delimCount >= recordTabThreshold) {
       if (current !== null) out.push(current);
       current = line;
     } else if (current !== null) {
-      const lineTabs = (line.match(/\t/g) || []).length;
       const trimmed = line.trim();
-      if (lineTabs > 0) {
-        // タブ含む続き行 → レコードの残りセル群として追加
-        // (例: Game列が中間にあり、Game値の改行行の後に H-1st/Steal/SS の値が別行で来る)
-        const cols = current.split('\t');
+      if (delimCount > 0) {
+        const cols = current.split(delim);
         if (cols.length < expectedCols) {
-          // タブの重複を避けつつ連結
-          const currentEndsTab = current.endsWith('\t');
-          const lineStartsTab = line.startsWith('\t');
-          if (currentEndsTab && lineStartsTab) {
-            current = current + line.slice(1);          // 重複TABを1つに
-          } else if (currentEndsTab || lineStartsTab) {
-            current = current + line;                    // どちらかにTABあり
+          const currentEndsDelim = current.endsWith(delim);
+          if (currentEndsDelim && startsWithDelim) {
+            current = current + line.slice(1);
+          } else if (currentEndsDelim || startsWithDelim) {
+            current = current + line;
           } else {
-            current = current + '\t' + line;             // どちらにもTABなし → 区切り追加
+            current = current + delim + line;
           }
         } else {
           cols[cols.length - 1] += ' ' + line;
-          current = cols.join('\t');
+          current = cols.join(delim);
         }
       } else {
-        // タブ無し単独行 → 既存末尾セルに連結 (Game値の改行を再結合する目的)
-        if (current.endsWith('\t')) {
+        if (current.endsWith(delim)) {
           current = current + trimmed;
         } else {
-          const cols = current.split('\t');
+          const cols = current.split(delim);
           cols[cols.length - 1] += ' ' + trimmed;
-          current = cols.join('\t');
+          current = cols.join(delim);
         }
       }
     }
@@ -446,10 +440,12 @@ async function handlePaste(text) {
 }
 
 function textToCsv(text) {
-  const delim = detectDelim(text);
-  if (delim === ',') return text;
+  // 先に複数行セルを結合してから出力 (保存CSVが「1行=1レコード」になり、履歴読み戻し時に日付/対戦が抽出可能)
+  const joined = joinMultilineCells(text);
+  const delim = detectDelim(joined);
+  if (delim === ',') return joined;
   const out = [];
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of joined.split(/\r?\n/)) {
     if (!line) { out.push(''); continue; }
     const fields = line.split('\t').map(f => {
       if (/[",\n]/.test(f)) return '"' + f.replace(/"/g, '""') + '"';
