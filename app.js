@@ -251,7 +251,16 @@ function renderTable() {
     return;
   }
   empty.style.display = 'none';
-  thead.innerHTML = '<tr>' + COLUMN_MAP.map(c => {
+  // 全行空欄の列は自動非表示 (例: 元データで 1st-2nd Steal が全行空のとき)
+  // Rk列は常に表示
+  const visibleCols = COLUMN_MAP.filter(c => {
+    if (c.agg === 'rank' || c.dst === 'Rk') return true;
+    return currentRows.some(r => {
+      const v = r[c.dst];
+      return v != null && String(v).trim() !== '';
+    });
+  });
+  thead.innerHTML = '<tr>' + visibleCols.map(c => {
     const isSort = sortState.col === c.dst;
     const arrow = isSort
       ? `<span class="sort-arrow active">${sortState.dir === 'asc' ? '▲' : '▼'}</span>`
@@ -273,7 +282,7 @@ function renderTable() {
     const team = (r['Team'] || '').trim();
     const teamColor = team && TEAM_COLORS[team] ? TEAM_COLORS[team] : '';
     const displayName = playerDisplay[fullName] || fullName;
-    return '<tr>' + COLUMN_MAP.map(c => {
+    return '<tr>' + visibleCols.map(c => {
       if (c.dst === 'Player') {
         const style = teamColor ? ` style="color:${teamColor}"` : '';
         const dt = team ? ` data-team="${team}"` : '';
