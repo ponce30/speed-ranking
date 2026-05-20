@@ -3,21 +3,118 @@ const REPO_NAME = 'speed-ranking';
 const DATA_DIR = 'data';
 const PAT_KEY = 'speed-ranking:pat';
 
+// 入力は「Stat Search Results」の生データ(1行=1プレー)をテキスト貼り付け想定。
+// 各プレーをそのままランキング1行として扱う (同一選手が複数回ランクインしてOK)。
+// 列の順番自由 / 余分な列を含んでもOK — headers.indexOf(src) で必要な列だけ動的に抽出する。
+// Tableauから貼り付けた時に複数行に分かれるセル (Game の "2026-04-05\nロ\n@\nソ" など) も
+// joinMultilineCells で自動結合する。制約: 複数行セルは「末尾の列」に存在することを想定。
 const COLUMN_MAP = [
-  { src: 'Rk',                  dst: 'Rk',                       type: 'num' },
-  { src: 'Player',              dst: 'Player',                   type: 'str' },
-  { src: 'H-1st (avg)',         dst: 'H-1st (平均)',             type: 'num' },
-  { src: 'SB',                  dst: 'SB',                       type: 'num' },
-  { src: 'H-1st (min)',         dst: 'H-1st (最速)',             type: 'num' },
-  { src: '1st-2nd Steal (avg)', dst: '1st-2nd 盗塁(平均)',       type: 'num' },
-  { src: '1st-2nd Steal (min)', dst: '1st-2nd 盗塁 (最速)',      type: 'num' },
-  { src: 'SS (max)',            dst: 'スプリントスピード(max)',  type: 'num' },
+  { dst: 'Rk',                src: null,                  type: 'num', agg: 'rank' },
+  { dst: '日付',               src: 'Game',                type: 'str' },     // Game値から YYYY-MM-DD を抽出
+  { dst: '対戦',               src: 'Game',                type: 'str' },     // Game値から日付以外の対戦表記を抽出
+  { dst: 'Player',            src: 'Player',              type: 'str' },
+  { dst: 'Team',              src: 'Team',                type: 'str' },     // 球団略号 (色付け用)
+  { dst: 'H-1st (秒)',         src: 'H-1st (SEC)',         type: 'num', decimals: 2 },
+  { dst: '1st-2nd 盗塁 (秒)',   src: '1st-2nd Steal (SEC)', type: 'num', decimals: 2 },  // 空欄OK
+  { dst: 'SS (m/s)',          src: 'SS (M/S)',            type: 'num', decimals: 1 },
 ];
 
+// 行ごと除外の閾値 (計測エラーや異常値の安全網)
+const H1ST_MIN_VALID = 3.0;   // H-1st (SEC) < 3.0 は計測エラー (NPB打者で常識的に出ない値)
+const SS_MAX_VALID = 11.0;    // SS (M/S) ≥ 11.0 は計測エラー (人間の限界超え)
+
+// NPB12球団のチーム略号 → 表示色 (catcher と統一)
+const TEAM_COLORS = {
+  '巨': '#F97709',  // 巨人 オレンジ
+  '神': '#FFE100',  // 阪神 タイガースイエロー
+  'ソ': '#DAA520',  // ソフトバンク ゴールド
+  '中': '#4A90D9',  // 中日 ライトブルー
+  'デ': '#009DDC',  // DeNA シアン
+  '西': '#2855B0',  // 西武 ブルー
+  '日': '#6EC0EC',  // 日本ハム 薄青
+  'ヤ': '#00C26F',  // ヤクルト グリーン
+  '広': '#FF3344',  // 広島 カープレッド
+  '楽': '#C8102E',  // 楽天 クリムゾン
+  'ロ': '#B0B0B0',  // ロッテ シルバー
+  'オ': '#B79764',  // オリックス 金茶
+};
+
 let currentRows = [];
-let sortState = { col: 'Rk', dir: 'asc' };
+let sortState = { col: 'H-1st (秒)', dir: 'asc' };
+
+// タブ区切り(Tableauコピペ) / カンマ区切り(CSV) の両方に対応。
+function detectDelim(text) {
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const tabs = (line.match(/\t/g) || []).length;
+    const commas = (line.match(/,/g) || []).length;
+    return tabs > commas ? '\t' : ',';
+  }
+  return ',';
+}
+
+// Tableauからのコピペで「Game」など複数行に渡るセル値が改行で分割された場合に再統合する。
+function joinMultilineCells(text) {
+  if (detectDelim(text) !== '\t') return text;
+  const lines = text.split(/\r?\n/);
+  if (lines.length === 0) return text;
+  const headerLine = lines[0];
+  const expectedCols = headerLine.split('\t').length;
+  if (expectedCols < 2) return text;
+
+  const recordTabThreshold = Math.max(1, Math.floor(expectedCols / 2));
+
+  const out = [headerLine];
+  let current = null;
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const tabCount = (line.match(/\t/g) || []).length;
+    // 先頭タブで始まる行は「前レコードの残りセル」を意味する続き行 (新レコードとは扱わない)
+    const startsWithTab = line.startsWith('\t');
+    if (!startsWithTab && tabCount >= recordTabThreshold) {
+      if (current !== null) out.push(current);
+      current = line;
+    } else if (current !== null) {
+      const lineTabs = (line.match(/\t/g) || []).length;
+      const trimmed = line.trim();
+      if (lineTabs > 0) {
+        // タブ含む続き行 → レコードの残りセル群として追加
+        // (例: Game列が中間にあり、Game値の改行行の後に H-1st/Steal/SS の値が別行で来る)
+        const cols = current.split('\t');
+        if (cols.length < expectedCols) {
+          // タブの重複を避けつつ連結
+          const currentEndsTab = current.endsWith('\t');
+          const lineStartsTab = line.startsWith('\t');
+          if (currentEndsTab && lineStartsTab) {
+            current = current + line.slice(1);          // 重複TABを1つに
+          } else if (currentEndsTab || lineStartsTab) {
+            current = current + line;                    // どちらかにTABあり
+          } else {
+            current = current + '\t' + line;             // どちらにもTABなし → 区切り追加
+          }
+        } else {
+          cols[cols.length - 1] += ' ' + line;
+          current = cols.join('\t');
+        }
+      } else {
+        // タブ無し単独行 → 既存末尾セルに連結 (Game値の改行を再結合する目的)
+        if (current.endsWith('\t')) {
+          current = current + trimmed;
+        } else {
+          const cols = current.split('\t');
+          cols[cols.length - 1] += ' ' + trimmed;
+          current = cols.join('\t');
+        }
+      }
+    }
+  }
+  if (current !== null) out.push(current);
+  return out.join('\n');
+}
 
 function parseCSV(text) {
+  const delim = detectDelim(text);
   const lines = [];
   let row = [], field = '', inQuotes = false;
   for (let i = 0; i < text.length; i++) {
@@ -29,7 +126,7 @@ function parseCSV(text) {
       } else field += c;
     } else {
       if (c === '"') inQuotes = true;
-      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === delim) { row.push(field); field = ''; }
       else if (c === '\n') { row.push(field); lines.push(row); row = []; field = ''; }
       else if (c === '\r') {}
       else field += c;
@@ -40,23 +137,65 @@ function parseCSV(text) {
 }
 
 function csvToRows(text) {
+  text = joinMultilineCells(text);
   const lines = parseCSV(text);
   if (lines.length === 0) return [];
   const headers = lines[0].map(h => h.trim());
-  const idxs = COLUMN_MAP.map(c => headers.indexOf(c.src));
-  const missing = COLUMN_MAP.filter((c, j) => idxs[j] < 0).map(c => c.src);
-  if (missing.length > 0) {
-    console.warn('未検出の列:', missing);
+
+  const idxs = {};
+  for (const c of COLUMN_MAP) {
+    idxs[c.dst] = c.src ? headers.indexOf(c.src) : -1;
   }
+  // Game / 1st-2nd Steal / Team は任意 (元データに無くてもOK)
+  const optionalSrc = new Set(['Game', '1st-2nd Steal (SEC)', 'Team']);
+  const missing = COLUMN_MAP.filter(c => c.src && !optionalSrc.has(c.src) && idxs[c.dst] < 0).map(c => c.src);
+  if (missing.length > 0) console.warn('未検出の列:', missing);
+
+  const h1Dst = 'H-1st (秒)';
+  const ssDst = 'SS (m/s)';
+  const MOJIBAKE_RE = /[A-Za-z�]/;
+  const DATE_RE = /(\d{4})-(\d{2})-(\d{2})/;
+
+  // ヘッダ列数 < データ列数 (Rk列がヘッダになくデータ先頭にだけある等) は先頭を切り捨て
+  const headerLen = headers.length;
+  const align = (dataRow) => dataRow.length > headerLen ? dataRow.slice(dataRow.length - headerLen) : dataRow;
+
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
+    const dataRow = align(lines[i]);
     const row = {};
-    COLUMN_MAP.forEach((c, j) => {
-      const idx = idxs[j];
-      row[c.dst] = idx >= 0 ? (lines[i][idx] ?? '') : '';
-    });
+    for (const c of COLUMN_MAP) {
+      if (!c.src) continue;
+      const idx = idxs[c.dst];
+      const raw = idx >= 0 ? (dataRow[idx] ?? '').trim() : '';
+      if (c.dst === '日付') {
+        const m = raw.match(DATE_RE);
+        row[c.dst] = m ? m[0] : '';
+      } else if (c.dst === '対戦') {
+        row[c.dst] = raw.replace(DATE_RE, '').trim();
+      } else {
+        row[c.dst] = raw;
+      }
+    }
+    // 行ごと除外:
+    // - Player名にラテン文字/U+FFFD (文字化け)
+    // - H-1st (秒) と SS (m/s) は数値必須 (このランキングの基幹指標)
+    // - 1st-2nd 盗塁 (秒) は欠損OK (盗塁試行が無い打席もあるため)
+    // - H-1st < 3.0 は計測エラー (異常な高速値)
+    // - SS >= 11.0 は計測エラー
+    if (MOJIBAKE_RE.test(row['Player'] || '')) continue;
+    const h1 = parseFloat(row[h1Dst]);
+    const ss = parseFloat(row[ssDst]);
+    if (isNaN(h1) || isNaN(ss)) continue;
+    if (h1 < H1ST_MIN_VALID) continue;
+    if (ss >= SS_MAX_VALID) continue;
     rows.push(row);
   }
+
+  // H-1st (秒) 昇順で Rk を1始まりで付与
+  const ordered = [...rows].sort((a, b) => parseFloat(a[h1Dst]) - parseFloat(b[h1Dst]));
+  ordered.forEach((r, i) => { r['Rk'] = String(i + 1); });
+
   return rows;
 }
 
@@ -96,9 +235,11 @@ function renderTable() {
   empty.style.display = 'none';
   thead.innerHTML = '<tr>' + COLUMN_MAP.map(c => {
     const isSort = sortState.col === c.dst;
-    const arrow = isSort ? (sortState.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    const arrow = isSort
+      ? `<span class="sort-arrow active">${sortState.dir === 'asc' ? '▲' : '▼'}</span>`
+      : '<span class="sort-arrow">⇅</span>';
     const cls = isSort ? ' class="sorted"' : '';
-    return `<th data-col="${c.dst}"${cls}>${c.dst}${arrow}</th>`;
+    return `<th data-col="${c.dst}"${cls}>${escapeHtml(c.dst)}${arrow}</th>`;
   }).join('') + '</tr>';
   thead.querySelectorAll('th').forEach(th => {
     th.addEventListener('click', () => {
@@ -109,9 +250,33 @@ function renderTable() {
       renderTable();
     });
   });
-  tbody.innerHTML = currentRows.map(r =>
-    '<tr>' + COLUMN_MAP.map(c => `<td>${escapeHtml(r[c.dst] ?? '')}</td>`).join('') + '</tr>'
-  ).join('');
+  tbody.innerHTML = currentRows.map(r => {
+    // Team列の値をそのまま色付けに使う (走力ランキングはデータ自体に Team があるので推定不要)
+    const team = (r['Team'] || '').trim();
+    const teamColor = team && TEAM_COLORS[team] ? TEAM_COLORS[team] : '';
+    return '<tr>' + COLUMN_MAP.map(c => {
+      if (c.dst === 'Player' && teamColor) {
+        return `<td style="color:${teamColor}" data-team="${team}">${escapeHtml(r[c.dst] || '')}</td>`;
+      }
+      if (c.dst === 'Team' && teamColor) {
+        return `<td style="color:${teamColor}">${escapeHtml(r[c.dst] || '')}</td>`;
+      }
+      return `<td>${escapeHtml(formatCell(r[c.dst], c))}</td>`;
+    }).join('') + '</tr>';
+  }).join('');
+}
+
+function formatCell(val, c) {
+  if (val == null || val === '') return '';
+  if (c.dst === '日付') {
+    const m = String(val).match(/(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${+m[2]}/${+m[3]}` : val;
+  }
+  if (c.decimals != null) {
+    const n = parseFloat(val);
+    if (!isNaN(n)) return n.toFixed(c.decimals);
+  }
+  return val;
 }
 
 function escapeHtml(s) {
@@ -214,7 +379,7 @@ async function loadFromRepo(path) {
   try {
     const text = await fetchFile(path);
     currentRows = csvToRows(text);
-    sortState = { col: 'Rk', dir: 'asc' };
+    sortState = { col: 'H-1st (秒)', dir: 'asc' };
     sortRows();
     renderTable();
     setStatus(`${path} を表示中 (${currentRows.length}件)`, 'success');
@@ -223,54 +388,63 @@ async function loadFromRepo(path) {
   }
 }
 
-async function handleUpload(file) {
-  if (!file.name.toLowerCase().endsWith('.csv')) {
-    setStatus('CSVファイルのみ対応', 'error');
+async function handlePaste(text) {
+  if (!text || !text.trim()) {
+    setStatus('テキストを貼り付けてください', 'error');
     return;
   }
-  setStatus(`${file.name} を解析中...`);
-  let text;
-  try {
-    text = await file.text();
-  } catch (e) {
-    setStatus(`ファイル読み込みエラー: ${e.message}`, 'error');
-    return;
-  }
+  setStatus('解析中...');
   currentRows = csvToRows(text);
   if (currentRows.length === 0) {
-    setStatus('データ行が見つかりません(列名が一致するか確認)', 'error');
+    setStatus('有効な行がありません(ヘッダ列名と項目欠損を確認)', 'error');
+    renderTable();
     return;
   }
-  sortState = { col: 'Rk', dir: 'asc' };
+  sortState = { col: 'H-1st (秒)', dir: 'asc' };
   sortRows();
   renderTable();
-  setStatus(`${file.name} 表示完了 (${currentRows.length}件)、保存中...`);
+  setStatus(`表示完了 (${currentRows.length}件)、保存中...`);
+
+  const csvText = textToCsv(text);
   try {
     const ts = new Date().toISOString().replace(/[:.]/g, '-').replace(/T/, '_').slice(0, 19);
     const filename = `${ts}.csv`;
-    await commitFile(filename, text);
+    await commitFile(filename, csvText);
     setStatus(`✓ ${filename} を保存しました (${currentRows.length}件)`, 'success');
     await loadHistory(false);
     document.getElementById('historySelect').value = `${DATA_DIR}/${filename}`;
   } catch (e) {
-    setStatus(`保存エラー: ${e.message}`, 'error');
+    setStatus(`保存エラー: ${e.message} (表示は完了)`, 'error');
   }
 }
 
-document.getElementById('fileInput').addEventListener('change', e => {
-  if (e.target.files[0]) handleUpload(e.target.files[0]);
-});
+function textToCsv(text) {
+  const delim = detectDelim(text);
+  if (delim === ',') return text;
+  const out = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line) { out.push(''); continue; }
+    const fields = line.split('\t').map(f => {
+      if (/[",\n]/.test(f)) return '"' + f.replace(/"/g, '""') + '"';
+      return f;
+    });
+    out.push(fields.join(','));
+  }
+  return out.join('\n');
+}
 
-const dz = document.getElementById('dropzone');
-['dragenter', 'dragover'].forEach(ev =>
-  dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); })
-);
-['dragleave', 'drop'].forEach(ev =>
-  dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); })
-);
-dz.addEventListener('drop', e => {
-  const f = e.dataTransfer.files[0];
-  if (f) handleUpload(f);
+document.getElementById('pasteRunBtn').addEventListener('click', () => {
+  handlePaste(document.getElementById('pasteInput').value);
+});
+document.getElementById('pasteClearBtn').addEventListener('click', () => {
+  document.getElementById('pasteInput').value = '';
+  document.getElementById('pasteInput').focus();
+});
+document.getElementById('pasteInput').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    handlePaste(document.getElementById('pasteInput').value);
+  }
 });
 
 document.getElementById('historySelect').addEventListener('change', e => {

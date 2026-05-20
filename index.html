@@ -13,10 +13,16 @@
 <header>
   <h1>SPEED RANKING</h1>
   <div class="controls">
-    <div id="dropzone">
-      <p>📁 CSVファイルをここにドロップ</p>
-      <p>または <input type="file" id="fileInput" accept=".csv"></p>
-      <p class="hint">「Stat Search Results」の生CSV(英語ヘッダ)を投入 → 自動で日本語列にマッピング・保存</p>
+    <div id="pasteBox">
+      <p>📋 「Stat Search Results」のテーブルをコピー → ここに貼り付け</p>
+      <textarea id="pasteInput" placeholder="Tableau の Stat Search Results を選択 → Ctrl+C → ここに Ctrl+V&#10;&#10;Rk	Player	Team	Game	H-1st (SEC)	1st-2nd Steal (SEC)	SS (M/S)&#10;1	小川 龍	ロ	2026-05-09 ロ @ ソ	3.63		9.0&#10;..." spellcheck="false"></textarea>
+      <div class="row" style="margin-top:8px;gap:8px">
+        <button id="pasteRunBtn" type="button">ランキング表示</button>
+        <button id="pasteClearBtn" type="button">クリア</button>
+        <span class="hint" style="margin-left:auto">Ctrl+Enter で即実行 / 列ヘッダクリックで昇順⇄降順</span>
+      </div>
+      <p class="hint">読み取り列: <code>Player, Team, H-1st (SEC), 1st-2nd Steal (SEC), SS (M/S), Game</code> — <strong>列順は自由</strong>、<strong>他の列が混ざってもOK</strong>(ヘッダ名で必要列だけ自動抽出)。Tableauで Game セルが複数行に分かれていても自動結合(Gameは末尾の列であること推奨)。<code>Game</code> から日付と対戦カードを抽出して表示。<code>Team</code> の値で選手名を球団色化</p>
+      <p class="hint">ランキング対象: <strong>H-1st (秒) と SS (m/s) が有効な行のみ</strong>(<code>1st-2nd Steal</code> は欠損OK)。除外条件: <code>H-1st < 3.0</code> (計測エラー) / <code>SS ≥ 11.0</code> (人間の限界超え)</p>
     </div>
     <div class="row">
       <label>履歴:</label>
@@ -44,7 +50,7 @@
     <tbody></tbody>
   </table>
   <p id="emptyHint" class="hint" style="text-align:center;padding:2rem">
-    CSVをアップロードまたは履歴から選択してください
+    上のテキストエリアにデータを貼り付けて「ランキング表示」を押すか、履歴から選択してください
   </p>
 </main>
 <script src="app.js"></script>

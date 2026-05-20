@@ -84,27 +84,46 @@ h1::after {
 
 .controls { display: flex; flex-direction: column; gap: 0.6rem; }
 
-#dropzone {
-  border: 1px dashed var(--glass-border);
+#pasteBox {
+  border: 1px solid var(--glass-border);
   border-radius: 8px;
   padding: 1.2rem;
-  text-align: center;
   background: var(--dark-card);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   transition: all 0.2s var(--ease);
 }
-#dropzone.drag {
-  border-color: var(--tint);
-  background: var(--tint-bg);
-  box-shadow: 0 0 24px var(--carp-red-dim);
-}
-#dropzone p { margin: 0.25rem 0; color: var(--labelPrimary); }
-#dropzone p:first-child {
+#pasteBox p { margin: 0.25rem 0; color: var(--labelPrimary); }
+#pasteBox p:first-child {
   font-family: var(--font-display);
   letter-spacing: 1px;
   font-weight: 500;
+  text-align: center;
+  margin-bottom: 0.6rem;
 }
+#pasteInput {
+  width: 100%;
+  min-height: 140px;
+  padding: 0.6rem 0.8rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption1);
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  color: var(--labelPrimary);
+  resize: vertical;
+  transition: all 0.15s var(--ease);
+  line-height: 1.4;
+  white-space: pre;
+}
+#pasteInput::placeholder { color: var(--labelTertiary); }
+#pasteInput:focus {
+  outline: none;
+  border-color: var(--tint);
+  background: rgba(198,12,48,0.04);
+}
+#pasteClearBtn { background: var(--glass); color: var(--carp-red); border: 1px solid var(--glass-border); }
+#pasteClearBtn:hover { background: var(--tint-bg); border-color: var(--tint-border); }
 .hint {
   font-size: var(--text-caption1);
   color: var(--labelSecondary);
@@ -264,13 +283,40 @@ th.sorted {
   color: var(--carp-red);
   background: rgba(198,12,48,0.1);
 }
+.sort-arrow {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 0.85em;
+  color: var(--labelTertiary);
+  opacity: 0.55;
+  transition: all 0.12s var(--ease);
+}
+.sort-arrow.active {
+  color: var(--carp-red);
+  opacity: 1;
+  text-shadow: 0 0 6px rgba(198,12,48,0.5);
+}
+th:hover .sort-arrow { color: var(--carp-red); opacity: 0.9; }
 td {
   font-family: var(--font-mono);
   font-feature-settings: "tnum";
   font-weight: 500;
 }
-td:nth-child(1), th:nth-child(1) { text-align: left; color: var(--labelTertiary); }
+/* 列構成: 1.Rk | 2.日付 | 3.対戦 | 4.Player | 5.ARM | 6.POP2B | 7.EXC */
+td:nth-child(1), th:nth-child(1) { text-align: left; color: var(--labelTertiary); width: 3rem; }
 td:nth-child(2), th:nth-child(2) {
+  text-align: left;
+  font-family: var(--font-mono);
+  color: var(--labelSecondary);
+  width: 4rem;
+}
+td:nth-child(3), th:nth-child(3) {
+  text-align: left;
+  font-family: var(--font-mono);
+  color: var(--labelSecondary);
+  width: 5rem;
+}
+td:nth-child(4), th:nth-child(4) {
   text-align: left;
   font-family: var(--font-system);
   font-weight: 500;
@@ -278,15 +324,15 @@ td:nth-child(2), th:nth-child(2) {
   position: sticky;
   left: 0;
 }
-td:nth-child(2) { background: #12121a; z-index: 1; }
-th:nth-child(2) { z-index: 3; }
+td:nth-child(4) { background: #12121a; z-index: 1; }
+th:nth-child(4) { z-index: 3; }
 tbody tr { transition: background 0.1s; }
 tbody tr:hover td { background: rgba(198,12,48,0.05); }
 tbody tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 tbody tr:nth-child(even):hover td { background: rgba(198,12,48,0.05); }
-tbody tr:nth-child(even) td:nth-child(2) { background: #16161f; }
-tbody tr:hover td:nth-child(2),
-tbody tr:nth-child(even):hover td:nth-child(2) { background: #1c1018; }
+tbody tr:nth-child(even) td:nth-child(4) { background: #16161f; }
+tbody tr:hover td:nth-child(4),
+tbody tr:nth-child(even):hover td:nth-child(4) { background: #1c1018; }
 
 #emptyHint {
   text-align: center;
