@@ -40,7 +40,28 @@ const TEAM_COLORS = {
 };
 
 let currentRows = [];
+let playerDisplay = {};  // { 'Player名(元)': '表示用短縮形' } 同姓いない選手は姓のみに
 let sortState = { col: 'H-1st (秒)', dir: 'asc' };
+
+// 姓ごとに登場するフル表記を集計し、姓が一意ならその姓のみ、複数いるならフル表記を採用
+function buildDisplayMap(rows) {
+  const surnameSet = {};
+  for (const r of rows) {
+    const full = (r['Player'] || '').trim();
+    if (!full) continue;
+    const surname = full.split(/\s+/)[0];
+    if (!surnameSet[surname]) surnameSet[surname] = new Set();
+    surnameSet[surname].add(full);
+  }
+  const map = {};
+  for (const r of rows) {
+    const full = (r['Player'] || '').trim();
+    if (!full) continue;
+    const surname = full.split(/\s+/)[0];
+    map[full] = surnameSet[surname].size === 1 ? surname : full;
+  }
+  return map;
+}
 
 // タブ区切り(Tableauコピペ) / カンマ区切り(CSV) の両方に対応。
 function detectDelim(text) {
@@ -196,6 +217,9 @@ function csvToRows(text) {
   const ordered = [...rows].sort((a, b) => parseFloat(a[h1Dst]) - parseFloat(b[h1Dst]));
   ordered.forEach((r, i) => { r['Rk'] = String(i + 1); });
 
+  // 同姓が1人だけの選手は姓のみで表示 (例: 「周東 佑」→「周東」)、同姓複数なら元のまま
+  playerDisplay = buildDisplayMap(rows);
+
   return rows;
 }
 
@@ -251,12 +275,15 @@ function renderTable() {
     });
   });
   tbody.innerHTML = currentRows.map(r => {
-    // Team列の値をそのまま色付けに使う (走力ランキングはデータ自体に Team があるので推定不要)
+    const fullName = r['Player'] || '';
     const team = (r['Team'] || '').trim();
     const teamColor = team && TEAM_COLORS[team] ? TEAM_COLORS[team] : '';
+    const displayName = playerDisplay[fullName] || fullName;
     return '<tr>' + COLUMN_MAP.map(c => {
-      if (c.dst === 'Player' && teamColor) {
-        return `<td style="color:${teamColor}" data-team="${team}">${escapeHtml(r[c.dst] || '')}</td>`;
+      if (c.dst === 'Player') {
+        const style = teamColor ? ` style="color:${teamColor}"` : '';
+        const dt = team ? ` data-team="${team}"` : '';
+        return `<td${style}${dt} title="${escapeHtml(fullName)}">${escapeHtml(displayName)}</td>`;
       }
       if (c.dst === 'Team' && teamColor) {
         return `<td style="color:${teamColor}">${escapeHtml(r[c.dst] || '')}</td>`;
